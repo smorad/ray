@@ -2,10 +2,10 @@ import numpy as np
 import gym
 from gym.spaces import Discrete, MultiDiscrete
 import tree  # pip install dm_tree
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Optional, Tuple
 
 from ray.rllib.models.modelv2 import ModelV2
-from ray.rllib.models.torch.misc import SlimFC
+from ray.rllib.models.torch.misc import SlimFC, jit_submodules
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
 from ray.rllib.policy.rnn_sequencing import add_time_dimension
 from ray.rllib.policy.sample_batch import SampleBatch
@@ -17,6 +17,24 @@ from ray.rllib.utils.torch_utils import flatten_inputs_to_1d_tensor, one_hot
 from ray.rllib.utils.typing import ModelConfigDict, TensorType
 
 torch, nn = try_import_torch()
+
+
+class TorchLSTMJitWrapper(torch.nn.Module):
+    """A wrapper around a torch LSTM implementing
+    a workaround for a pytorch bug. See
+    https://github.com/pytorch/pytorch/issues/32976 for more info
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.unwrapped_lstm = torch.nn.LSTM(*args, **kwargs)
+
+    def forward(
+        self,
+        x: torch.nn.utils.rnn.PackedSequence,
+        state: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+    ):
+        return self.unwrapped_lstm(x, state)
 
 
 @DeveloperAPI
@@ -163,9 +181,16 @@ class LSTMWrapper(RecurrentNetwork, nn.Module):
 
         # Define actual LSTM layer (with num_outputs being the nodes coming
         # from the wrapped (underlying) layer).
+        # Need to wrap LSTM for JIT, see
+        # https://github.com/pytorch/pytorch/issues/32976
+        self.lstm = TorchLSTMJitWrapper(
+            self.num_outputs, self.cell_size, batch_first=not self.time_major
+        )
+        """
         self.lstm = nn.LSTM(
             self.num_outputs, self.cell_size, batch_first=not self.time_major
         )
+        """
 
         # Set self.num_outputs to the number of output nodes desired by the
         # caller of this constructor.
@@ -195,6 +220,7 @@ class LSTMWrapper(RecurrentNetwork, nn.Module):
             self.view_requirements[SampleBatch.PREV_REWARDS] = ViewRequirement(
                 SampleBatch.REWARDS, shift=-1
             )
+        jit_submodules(self)
         # __sphinx_doc_end__
 
     @override(RecurrentNetwork)

@@ -3,7 +3,12 @@ import numpy as np
 import gym
 
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
-from ray.rllib.models.torch.misc import SlimFC, AppendBiasLayer, normc_initializer
+from ray.rllib.models.torch.misc import (
+    SlimFC,
+    AppendBiasLayer,
+    normc_initializer,
+    jit_submodules,
+)
 from ray.rllib.utils.annotations import override
 from ray.rllib.utils.framework import try_import_torch
 from ray.rllib.utils.typing import Dict, TensorType, List, ModelConfigDict
@@ -133,6 +138,8 @@ class FullyConnectedNetwork(TorchModelV2, nn.Module):
         self._features = None
         # Holds the last input, in case value branch is separate.
         self._last_flat_in = None
+        # JIT-compile modules
+        jit_submodules(self)
 
     @override(TorchModelV2)
     def forward(

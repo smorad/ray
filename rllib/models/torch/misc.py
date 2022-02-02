@@ -9,6 +9,17 @@ from ray.rllib.utils.typing import TensorType
 torch, nn = try_import_torch()
 
 
+def jit_submodules(module: torch.nn.Module) -> None:
+    """Given a torch.nn.Module, JIT all submodules"""
+    for name, submod in list(module.named_children()):
+        # print(type(submod))
+        # Inheritance means this might be called twice
+        # so do not recompile
+        if isinstance(submod, torch.jit.ScriptModule):
+            continue
+        setattr(module, name, torch.jit.script(submod))
+
+
 def normc_initializer(std: float = 1.0) -> Any:
     def initializer(tensor):
         tensor.data.normal_(0, 1)
@@ -160,7 +171,7 @@ class SlimFC(nn.Module):
         # Put everything in sequence.
         self._model = nn.Sequential(*layers)
 
-    def forward(self, x: TensorType) -> TensorType:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self._model(x)
 
 
@@ -172,7 +183,7 @@ class AppendBiasLayer(nn.Module):
         self.log_std = torch.nn.Parameter(torch.as_tensor([0.0] * num_bias_vars))
         self.register_parameter("log_std", self.log_std)
 
-    def forward(self, x: TensorType) -> TensorType:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         out = torch.cat([x, self.log_std.unsqueeze(0).repeat([len(x), 1])], axis=1)
         return out
 
